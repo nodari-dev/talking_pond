@@ -37,9 +37,10 @@ func main() {
 			r, g, b, _ := img.At(x * scale_x, y * scale_y).RGBA()
 			lum := (19595*r + 38470*g + 7471*b + 1<<15) >> 24
 			indx := lum * 10 / 256
-			fmt.Printf("%c", arr[indx])
+			color := fmt.Sprintf("\033[38;0;0;%d;%d;%dm%c\033[0m", uint8(r), uint8(g), uint8(b), arr[indx])
+			fmt.Print(color)
+			fmt.Println(uint8(r), uint8(g), uint8(b))
 		}
 		fmt.Println()
 	}
-
 }
