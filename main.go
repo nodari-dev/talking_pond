@@ -5,12 +5,53 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
+	"net/url"
 	"os"
+	"os/signal"
+
+	"github.com/gorilla/websocket"
 )
 
 var frame_chars = []byte{' ', '`', '.', ',', '~', '+', '*', '&', '#', '@'}
 
 func main() {
+
+	// Define the WebSocket server URL (replace with your server's address)
+	serverAddr := "ws://localhost:6969/websocket"
+
+	// Parse the URL
+	u, err := url.Parse(serverAddr)
+	if err != nil {
+		log.Fatalf("Invalid server address: %v", err)
+	}
+
+	// Dial the WebSocket server
+	log.Printf("Connecting to %s...", serverAddr)
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+	log.Println("Connected to server")
+
+	// Set up interrupt handling for graceful shutdown
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
+	// Communication goroutine
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				log.Println("Read error:", err)
+				return
+			}
+			decode_frame(message)
+		}
+	}()
 
 	list, err := os.ReadDir("tmp_frames")
 	if err != nil {
@@ -29,26 +70,48 @@ func main() {
 				panic("ROBERT WHAT HAPPENED??")
 			}
 			encoded := encode_frame(img)
-			decode_frame(encoded)
+			fmt.Println(len(encoded))
+			err = conn.WriteMessage(websocket.BinaryMessage, encoded)
+			if err != nil {
+				log.Fatalf("Write error: %v", err)
+			}
 		}
 	}
+	// Send a test message
+
+	// Wait for interrupt signal to close the connection
+	for {
+		select {
+		case <-done:
+			return
+		case <-interrupt:
+			log.Println("Interrupt received, closing connection")
+			// Send a close message to the server
+			err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			if err != nil {
+				log.Println("Close error:", err)
+			}
+			return
+		}
+	}
+
 }
 
-type CharMeDaddy struct{
+type CharMeDaddy struct {
 	char, count, r, g, b byte
 }
 
-func encode_frame(img image.Image) []byte{
+func encode_frame(img image.Image) []byte {
 	orig_bounds := img.Bounds().Max
 
-	scale_x := orig_bounds.X / 160
-	scale_y := orig_bounds.Y / 130
+	scale_x := orig_bounds.X / 80
+	scale_y := orig_bounds.Y / 40
 	new_img_x := orig_bounds.X / scale_x
 	new_img_y := orig_bounds.Y / scale_y
 
 	encoded_data := []byte{}
 	all_rle := []CharMeDaddy{}
-	
+
 	for y := range new_img_y {
 		for x := range new_img_x {
 			r, g, b, _ := img.At(x*scale_x, y*scale_y).RGBA()
@@ -60,22 +123,22 @@ func encode_frame(img image.Image) []byte{
 			// 2 - r
 			// 3 - g
 			// 4 - b
-			// 5 - new line 
-			if x == 0{
+			// 5 - new line
+			if x == 0 {
 				all_rle = append(all_rle, CharMeDaddy{frame_chars[indx], 1, uint8(r), uint8(g), uint8(b)})
-			} else{
-				curr_rle := &all_rle[len(all_rle) - 1]
+			} else {
+				curr_rle := &all_rle[len(all_rle)-1]
 				if frame_chars[indx] == curr_rle.char &&
 					uint8(r) == curr_rle.r &&
 					uint8(g) == curr_rle.g &&
 					uint8(b) == curr_rle.b {
-						curr_rle.count += 1
-				} else{
+					curr_rle.count += 1
+				} else {
 					all_rle = append(all_rle, CharMeDaddy{frame_chars[indx], 1, uint8(r), uint8(g), uint8(b)})
 				}
 			}
 		}
-		for _, el:= range all_rle{
+		for _, el := range all_rle {
 			encoded_data = append(encoded_data, el.char, el.count, el.r, el.g, el.b)
 		}
 		all_rle = []CharMeDaddy{}
@@ -114,4 +177,3 @@ func decode_frame(enc_data []byte) {
 
 	}
 }
-
